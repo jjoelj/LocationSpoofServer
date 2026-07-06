@@ -1,0 +1,8 @@
+Package: app.bluebubbles.locationspoofserver
+Name: Location Spoof Server
+Version: 0.0.1
+Architecture: iphoneos-arm
+Description: An awesome application!
+Maintainer: Joel Jothiprakasam
+Author: Joel Jothiprakasam
+Section: Utilities
