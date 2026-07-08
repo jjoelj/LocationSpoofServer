@@ -35,6 +35,24 @@ static NSString *HeaderValue(NSString *request, NSString *headerName) {
     return nil;
 }
 
+static NSString *URLDecode(NSString *s) {
+    return [s stringByRemovingPercentEncoding] ?: s;
+}
+
+static NSDictionary<NSString *, NSString *> *ParseQuery(NSString *query) {
+    if (query.length == 0) return @{};
+    NSMutableDictionary *out = [NSMutableDictionary dictionary];
+
+    for (NSString *pair in [query componentsSeparatedByString:@"&"]) {
+        if (pair.length == 0) continue;
+        NSArray *kv = [pair componentsSeparatedByString:@"="];
+        NSString *k = URLDecode(kv.count > 0 ? kv[0] : @"");
+        NSString *v = URLDecode(kv.count > 1 ? kv[1] : @"");
+        if (k.length) out[k] = v ?: @"";
+    }
+    return out;
+}
+
 static void WriteJSON(int fd, int status, NSDictionary *obj) {
     NSData *json = [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
     if (!json) json = [@"{\"ok\":false,\"message\":\"json encode failed\"}" dataUsingEncoding:NSUTF8StringEncoding];
@@ -51,6 +69,21 @@ static void WriteJSON(int fd, int status, NSDictionary *obj) {
 
     (void)write(fd, hdr, (size_t)n);
     (void)write(fd, json.bytes, json.length);
+}
+
+static void WriteJSONBody(int fd, int status, NSString *json) {
+    NSData *body = [json dataUsingEncoding:NSUTF8StringEncoding];
+    char hdr[512];
+    const char *statusText = status == 200 ? "OK" : (status == 409 ? "Conflict" : "Error");
+    int n = snprintf(hdr, sizeof(hdr),
+                     "HTTP/1.1 %d %s\r\n"
+                     "Content-Type: application/json; charset=utf-8\r\n"
+                     "Content-Length: %zu\r\n"
+                     "Connection: close\r\n"
+                     "\r\n",
+                     status, statusText, (size_t)body.length);
+    (void)write(fd, hdr, (size_t)n);
+    (void)write(fd, body.bytes, body.length);
 }
 
 static NSData *ReadExact(int fd, size_t n) {
@@ -87,6 +120,13 @@ static NSData *ReadExact(int fd, size_t n) {
     }
     NSString *method = fl[0];
     NSString *target = fl[1];
+    NSString *path = target;
+    NSString *query = @"";
+    NSRange qmark = [target rangeOfString:@"?"];
+    if (qmark.location != NSNotFound) {
+        path = [target substringToIndex:qmark.location];
+        query = [target substringFromIndex:qmark.location + 1];
+    }
 
     if (![target isEqualToString:@"/logs"]) {
         [[LSSLogger shared] log:[NSString stringWithFormat:@"%@ %@", method, target] tag:@"HTTP"];
@@ -116,44 +156,42 @@ static NSData *ReadExact(int fd, size_t n) {
 
     LSSDaemonController *dc = [LSSDaemonController shared];
 
-    if ([method isEqualToString:@"GET"] && [target isEqualToString:@"/status"]) {
+    if ([method isEqualToString:@"GET"] && [path isEqualToString:@"/status"]) {
         WriteJSON(cfd, 200, [dc status]);
         close(cfd);
         return;
     }
 
-    if ([method isEqualToString:@"GET"] && [target isEqualToString:@"/logs"]) {
+    if ([method isEqualToString:@"GET"] && [path isEqualToString:@"/logs"]) {
         WriteJSON(cfd, 200, [dc logs]);
         close(cfd);
         return;
     }
 
-    if ([method isEqualToString:@"GET"] && [target isEqualToString:@"/friends"]) {
-        NSString *json = [dc friendsJSON];
-        NSData *body = [json dataUsingEncoding:NSUTF8StringEncoding];
-        char hdr[256];
-        int hn = snprintf(hdr, sizeof(hdr),
-                          "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n"
-                          "Content-Length: %zu\r\nConnection: close\r\n\r\n", (size_t)body.length);
-        (void)write(cfd, hdr, (size_t)hn);
-        (void)write(cfd, body.bytes, body.length);
+    if ([method isEqualToString:@"GET"] &&
+        ([path isEqualToString:@"/friends"] || [path isEqualToString:@"/friends/refresh"])) {
+        NSDictionary *q = ParseQuery(query);
+        BOOL refresh = [path isEqualToString:@"/friends/refresh"];
+        BOOL started = YES;
+        NSString *json = refresh ? [dc refreshFriendsJSONForHandle:q[@"handle"] ifStarted:&started] : [dc friendsJSON];
+        WriteJSONBody(cfd, started ? 200 : 409, json);
         close(cfd);
         return;
     }
 
-    if ([method isEqualToString:@"GET"] && [target isEqualToString:@"/token"]) {
+    if ([method isEqualToString:@"GET"] && [path isEqualToString:@"/token"]) {
         WriteJSON(cfd, 200, @{@"ok": @YES, @"token": dc.setEndpointToken ?: @""});
         close(cfd);
         return;
     }
 
-    if ([method isEqualToString:@"POST"] && [target isEqualToString:@"/token/regenerate"]) {
+    if ([method isEqualToString:@"POST"] && [path isEqualToString:@"/token/regenerate"]) {
         WriteJSON(cfd, 200, [dc regenerateToken]);
         close(cfd);
         return;
     }
 
-    if ([method isEqualToString:@"POST"] && [target isEqualToString:@"/token"]) {
+    if ([method isEqualToString:@"POST"] && [path isEqualToString:@"/token"]) {
         NSString *tok = [json[@"token"] isKindOfClass:[NSString class]] ? json[@"token"] : @"";
         NSDictionary *resp = [dc applyToken:tok];
         WriteJSON(cfd, [resp[@"ok"] boolValue] ? 200 : 400, resp);
@@ -194,8 +232,8 @@ static NSData *ReadExact(int fd, size_t n) {
         if (!self) return;
         int cfd = accept(self.listenFD, NULL, NULL);
         if (cfd < 0) return;
-        // Handle off the accept queue: /friends can block ~15s and must not
-        // stall the app's 0.5s log polling.
+        // Handle off the accept queue: /friends/refresh can block tens of
+        // seconds and must not stall the app's 0.5s log polling.
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
             [self handleClient:cfd];
         });

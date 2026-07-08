@@ -8,5 +8,10 @@
 	<true/>
 	<key>com.apple.fmf</key>
 	<true/>
+	<!-- fmfd only *delivers* location updates (didReceiveLocation:) to clients
+	     that also hold another Find My access entitlement; bare fmfd.access
+	     connects and lists handles but never pushes fixes. -->
+	<key>com.apple.icloud.findmydeviced.access</key>
+	<true/>
 </dict>
 </plist>

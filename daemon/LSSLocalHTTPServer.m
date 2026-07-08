@@ -64,6 +64,17 @@ static void WriteHTTP(int fd, int status, const char *statusText, const char *bo
     if (bodyLen) (void)write(fd, body, bodyLen);
 }
 
+static void WriteJSONBody(int fd, int status, const char *statusText, NSString *json) {
+    NSData *body = [json dataUsingEncoding:NSUTF8StringEncoding];
+    char hdr[256];
+    int hn = snprintf(hdr, sizeof(hdr),
+        "HTTP/1.1 %d %s\r\nContent-Type: application/json; charset=utf-8\r\n"
+        "Content-Length: %zu\r\nConnection: close\r\n\r\n",
+        status, statusText, (size_t)body.length);
+    (void)write(fd, hdr, (size_t)hn);
+    (void)write(fd, body.bytes, body.length);
+}
+
 - (void)handleClient:(int)cfd {
     // Read request (simple, assumes it fits in buffer for this test)
     char buf[4096];
@@ -105,7 +116,7 @@ static void WriteHTTP(int fd, int status, const char *statusText, const char *bo
         return;
     }
 
-    if ([path isEqualToString:@"/friends"]) {
+    if ([path isEqualToString:@"/friends"] || [path isEqualToString:@"/friends/refresh"]) {
         NSDictionary *q = ParseQuery(query);
         NSString *token = q[@"token"];
         if (token == nil || ![token isEqualToString:self.authToken]) {
@@ -113,14 +124,11 @@ static void WriteHTTP(int fd, int status, const char *statusText, const char *bo
             close(cfd);
             return;
         }
-        NSString *json = [[LSSDaemonController shared] friendsJSON];
-        NSData *body = [json dataUsingEncoding:NSUTF8StringEncoding];
-        char hdr[256];
-        int hn = snprintf(hdr, sizeof(hdr),
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n"
-            "Content-Length: %zu\r\nConnection: close\r\n\r\n", (size_t)body.length);
-        (void)write(cfd, hdr, (size_t)hn);
-        (void)write(cfd, body.bytes, body.length);
+        BOOL refresh = [path isEqualToString:@"/friends/refresh"];
+        BOOL started = YES;
+        NSString *handle = q[@"handle"];
+        NSString *json = refresh ? [[LSSDaemonController shared] refreshFriendsJSONForHandle:handle ifStarted:&started] : [[LSSDaemonController shared] friendsJSON];
+        WriteJSONBody(cfd, started ? 200 : 409, started ? "OK" : "Conflict", json);
         close(cfd);
         return;
     }
@@ -204,8 +212,8 @@ static void WriteHTTP(int fd, int status, const char *statusText, const char *bo
         int cfd = accept(self.listenFD, NULL, NULL);
         if (cfd < 0) return;
 
-        // /friends can block a few seconds spawning the FMF helper; handle off
-        // the accept queue so it never stalls /set location pushes.
+        // /friends/refresh can block tens of seconds spawning the FMF helper;
+        // handle off the accept queue so it never stalls /set location pushes.
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
             [self handleClient:cfd];
         });

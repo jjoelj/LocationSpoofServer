@@ -40,8 +40,29 @@ static NSString *LoadOrCreateToken(void) {
     return tok;
 }
 
+static NSString *FriendsSummary(NSString *json) {
+    NSData *data = [json dataUsingEncoding:NSUTF8StringEncoding];
+    NSDictionary *obj = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+    if (![obj isKindOfClass:[NSDictionary class]]) return @"invalid json";
+
+    if (![obj[@"ok"] boolValue]) {
+        NSString *message = [obj[@"message"] isKindOfClass:[NSString class]] ? obj[@"message"] : @"unknown error";
+        return [NSString stringWithFormat:@"failed: %@", message];
+    }
+
+    NSArray *friends = [obj[@"friends"] isKindOfClass:[NSArray class]] ? obj[@"friends"] : @[];
+    NSUInteger valid = 0;
+    for (NSDictionary *f in friends) {
+        if (![f isKindOfClass:[NSDictionary class]]) continue;
+        if ([f[@"valid"] boolValue]) valid++;
+    }
+    return [NSString stringWithFormat:@"ok: %lu friends, %lu valid locations",
+            (unsigned long)friends.count, (unsigned long)valid];
+}
+
 @interface LSSDaemonController ()
 @property(nonatomic, strong) LSSLocalHTTPServer *publicServer;
+@property(nonatomic, assign) BOOL refreshFriendsInProgress;
 @end
 
 @implementation LSSDaemonController
@@ -112,10 +133,13 @@ static NSString *LoadOrCreateToken(void) {
 }
 
 // Spawn the FMF helper and return its JSON stdout. Blocks until it exits
-// (helper self-caps at ~15s), so callers must not run on a shared serial path.
-- (NSString *)friendsJSON {
+// (helper self-caps), so callers must not run on a shared serial path.
+- (NSString *)friendsJSONWithRefresh:(BOOL)refresh handle:(NSString *)handle {
     int fds[2];
-    if (pipe(fds) != 0) return @"{\"ok\":false,\"message\":\"pipe failed\"}";
+    if (pipe(fds) != 0) {
+        if (refresh) [[LSSLogger shared] log:@"friends refresh failed before spawn: pipe failed" tag:@"FMF"];
+        return @"{\"ok\":false,\"message\":\"pipe failed\"}";
+    }
 
     posix_spawn_file_actions_t fa;
     posix_spawn_file_actions_init(&fa);
@@ -123,7 +147,12 @@ static NSString *LoadOrCreateToken(void) {
     posix_spawn_file_actions_addclose(&fa, fds[0]);
     posix_spawn_file_actions_addclose(&fa, fds[1]);
 
-    char *argv[] = { (char *)kFMFHelperPath.UTF8String, NULL };
+    char *argv[] = {
+        (char *)kFMFHelperPath.UTF8String,
+        refresh ? "--refresh" : NULL,
+        (refresh && handle.length) ? (char *)handle.UTF8String : NULL,
+        NULL
+    };
     pid_t pid = 0;
     int rc = posix_spawn(&pid, argv[0], &fa, NULL, argv, environ);
     posix_spawn_file_actions_destroy(&fa);
@@ -135,16 +164,60 @@ static NSString *LoadOrCreateToken(void) {
         return @"{\"ok\":false,\"message\":\"helper spawn failed\"}";
     }
 
+    if (refresh) {
+        NSString *target = handle.length ? [NSString stringWithFormat:@" handle=%@", handle] : @"";
+        [[LSSLogger shared] log:[NSString stringWithFormat:@"friends refresh helper started pid=%d%@", pid, target] tag:@"FMF"];
+    }
+
     NSMutableData *out = [NSMutableData data];
     uint8_t buf[4096];
     ssize_t n;
     while ((n = read(fds[0], buf, sizeof(buf))) > 0) [out appendBytes:buf length:(size_t)n];
     close(fds[0]);
-    waitpid(pid, NULL, 0);
+    int status = 0;
+    waitpid(pid, &status, 0);
 
-    if (out.length == 0) return @"{\"ok\":false,\"message\":\"helper produced no output\"}";
+    if (refresh && status != 0) {
+        [[LSSLogger shared] log:[NSString stringWithFormat:@"friends refresh helper exited status=%d", status] tag:@"FMF"];
+    }
+
+    if (out.length == 0) {
+        if (refresh) [[LSSLogger shared] log:@"friends refresh failed: helper produced no output" tag:@"FMF"];
+        return @"{\"ok\":false,\"message\":\"helper produced no output\"}";
+    }
     NSString *s = [[NSString alloc] initWithData:out encoding:NSUTF8StringEncoding];
+    if (!s && refresh) [[LSSLogger shared] log:@"friends refresh failed: helper output not utf8" tag:@"FMF"];
     return s ?: @"{\"ok\":false,\"message\":\"helper output not utf8\"}";
+}
+
+- (NSString *)friendsJSON {
+    return [self friendsJSONWithRefresh:NO handle:nil];
+}
+
+- (NSString *)refreshFriendsJSONForHandle:(NSString *)handle ifStarted:(BOOL *)started {
+    @synchronized (self) {
+        if (self.refreshFriendsInProgress) {
+            if (started) *started = NO;
+            [[LSSLogger shared] log:@"friends refresh rejected: already in progress" tag:@"FMF"];
+            return @"{\"ok\":false,\"message\":\"friends refresh already in progress\"}";
+        }
+        self.refreshFriendsInProgress = YES;
+    }
+
+    if (started) *started = YES;
+    NSDate *start = [NSDate date];
+    NSString *target = handle.length ? [NSString stringWithFormat:@" for handle=%@", handle] : @"";
+    [[LSSLogger shared] log:[NSString stringWithFormat:@"friends refresh started%@", target] tag:@"FMF"];
+    @try {
+        NSString *json = [self friendsJSONWithRefresh:YES handle:handle];
+        NSTimeInterval elapsed = [[NSDate date] timeIntervalSinceDate:start];
+        [[LSSLogger shared] log:[NSString stringWithFormat:@"friends refresh finished in %.1fs (%@)", elapsed, FriendsSummary(json)] tag:@"FMF"];
+        return json;
+    } @finally {
+        @synchronized (self) {
+            self.refreshFriendsInProgress = NO;
+        }
+    }
 }
 
 - (NSDictionary *)status {
