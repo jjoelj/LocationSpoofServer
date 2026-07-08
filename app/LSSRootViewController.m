@@ -381,9 +381,9 @@ static UIImage *QRImage(NSString *string) {
             NSMutableString *s = [NSMutableString stringWithFormat:@"friends (%lu):\n", (unsigned long)friends.count];
             for (NSDictionary *f in friends) {
                 if ([f[@"valid"] boolValue]) {
-                    [s appendFormat:@"  %@  %.5f, %.5f\n", f[@"name"], [f[@"lat"] doubleValue], [f[@"lon"] doubleValue]];
+                    [s appendFormat:@"  %@  %.5f, %.5f\n", f[@"handle"], [f[@"lat"] doubleValue], [f[@"lon"] doubleValue]];
                 } else {
-                    [s appendFormat:@"  %@  (no location)\n", f[@"name"]];
+                    [s appendFormat:@"  %@  (no location)\n", f[@"handle"]];
                 }
             }
             [weakSelf log:s];

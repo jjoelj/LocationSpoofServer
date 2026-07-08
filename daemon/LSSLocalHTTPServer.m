@@ -105,6 +105,26 @@ static void WriteHTTP(int fd, int status, const char *statusText, const char *bo
         return;
     }
 
+    if ([path isEqualToString:@"/friends"]) {
+        NSDictionary *q = ParseQuery(query);
+        NSString *token = q[@"token"];
+        if (token == nil || ![token isEqualToString:self.authToken]) {
+            WriteHTTP(cfd, 403, "Forbidden", "invalid or missing token\n");
+            close(cfd);
+            return;
+        }
+        NSString *json = [[LSSDaemonController shared] friendsJSON];
+        NSData *body = [json dataUsingEncoding:NSUTF8StringEncoding];
+        char hdr[256];
+        int hn = snprintf(hdr, sizeof(hdr),
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n"
+            "Content-Length: %zu\r\nConnection: close\r\n\r\n", (size_t)body.length);
+        (void)write(cfd, hdr, (size_t)hn);
+        (void)write(cfd, body.bytes, body.length);
+        close(cfd);
+        return;
+    }
+
     if ([path isEqualToString:@"/set"]) {
         NSDictionary *q = ParseQuery(query);
         NSString *lat = q[@"lat"];
@@ -184,7 +204,11 @@ static void WriteHTTP(int fd, int status, const char *statusText, const char *bo
         int cfd = accept(self.listenFD, NULL, NULL);
         if (cfd < 0) return;
 
-        [self handleClient:cfd];
+        // /friends can block a few seconds spawning the FMF helper; handle off
+        // the accept queue so it never stalls /set location pushes.
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+            [self handleClient:cfd];
+        });
     });
 
     dispatch_resume(self.acceptSource);

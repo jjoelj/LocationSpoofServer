@@ -73,14 +73,11 @@ int main(void) {
                             CLLocationCoordinate2DIsValid(loc.coordinate) &&
                             !(loc.coordinate.latitude == 0 && loc.coordinate.longitude == 0);
                         // handle (phone/email) is the key the Android side matches
-                        // against its contacts. name is this device's contact
-                        // resolution (FMFHandle.prettyName) — best-effort only; note
-                        // FMFLocation.label/subtitle are the *place*, never the person.
-                        NSString *name = [h respondsToSelector:@selector(prettyName)] ? h.prettyName : nil;
-                        if (!name.length) name = identifier;
+                        // against its own contacts — we deliberately do NOT send this
+                        // device's contact name. (address/fullAddress are the place,
+                        // not the person, so they're fine to include.)
                         [out addObject:@{
                             @"handle": identifier ?: @"",
-                            @"name": name ?: @"?",
                             @"lat": known ? @(loc.coordinate.latitude) : [NSNull null],
                             @"lon": known ? @(loc.coordinate.longitude) : [NSNull null],
                             @"accuracy": known ? @(loc.horizontalAccuracy) : [NSNull null],
