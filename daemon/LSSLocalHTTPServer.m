@@ -75,6 +75,19 @@ static void WriteJSONBody(int fd, int status, const char *statusText, NSString *
     (void)write(fd, body.bytes, body.length);
 }
 
+static void WriteJSON(int fd, int status, const char *statusText, NSDictionary *obj) {
+    NSData *body = [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
+    if (!body) body = [@"{\"ok\":false,\"message\":\"json encode failed\"}" dataUsingEncoding:NSUTF8StringEncoding];
+
+    char hdr[256];
+    int hn = snprintf(hdr, sizeof(hdr),
+        "HTTP/1.1 %d %s\r\nContent-Type: application/json; charset=utf-8\r\n"
+        "Content-Length: %zu\r\nConnection: close\r\n\r\n",
+        status, statusText, (size_t)body.length);
+    (void)write(fd, hdr, (size_t)hn);
+    (void)write(fd, body.bytes, body.length);
+}
+
 - (void)handleClient:(int)cfd {
     // Read request (simple, assumes it fits in buffer for this test)
     char buf[4096];
@@ -129,6 +142,22 @@ static void WriteJSONBody(int fd, int status, const char *statusText, NSString *
         NSString *handle = q[@"handle"];
         NSString *json = refresh ? [[LSSDaemonController shared] refreshFriendsJSONForHandle:handle ifStarted:&started] : [[LSSDaemonController shared] friendsJSON];
         WriteJSONBody(cfd, started ? 200 : 409, started ? "OK" : "Conflict", json);
+        close(cfd);
+        return;
+    }
+
+    if ([path isEqualToString:@"/battery"]) {
+        NSDictionary *q = ParseQuery(query);
+        NSString *token = q[@"token"];
+        if (token == nil || ![token isEqualToString:self.authToken]) {
+            WriteHTTP(cfd, 403, "Forbidden", "invalid or missing token\n");
+            close(cfd);
+            return;
+        }
+
+        NSDictionary *battery = [[LSSDaemonController shared] batteryStatus];
+        BOOL ok = [battery[@"ok"] boolValue];
+        WriteJSON(cfd, ok ? 200 : 503, ok ? "OK" : "Service Unavailable", battery);
         close(cfd);
         return;
     }

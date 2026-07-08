@@ -43,9 +43,6 @@ static UIImage *QRImage(NSString *string) {
 @property(nonatomic, strong) UITextView *serverLogView;
 @property(nonatomic, strong) UITextView *logView;
 
-@property(nonatomic, strong) UIButton *statusBtn;
-@property(nonatomic, strong) UIButton *friendsBtn;
-
 @property(nonatomic, strong) UILabel *tokenCaption;
 @property(nonatomic, strong) UILabel *tokenLabel;
 @property(nonatomic, strong) UIButton *tokenEyeBtn;
@@ -215,9 +212,6 @@ static UIImage *QRImage(NSString *string) {
 }
 
 - (void)buildUI {
-    self.statusBtn = [self makeButton:@"Status" action:@selector(statusPressed)];
-    self.friendsBtn = [self makeButton:@"Friends" action:@selector(friendsPressed)];
-
     self.tokenCaption = [[UILabel alloc] init];
     self.tokenCaption.font = [UIFont systemFontOfSize:11 weight:UIFontWeightSemibold];
     self.tokenCaption.textColor = [UIColor tertiaryLabelColor];
@@ -260,8 +254,6 @@ static UIImage *QRImage(NSString *string) {
 
     UIView *container = [[UIView alloc] init];
     [self.view addSubview:container];
-    [container addSubview:self.statusBtn];
-    [container addSubview:self.friendsBtn];
     [container addSubview:self.tokenCaption];
     [container addSubview:self.tokenLabel];
     [container addSubview:self.tokenEyeBtn];
@@ -272,8 +264,6 @@ static UIImage *QRImage(NSString *string) {
     [container addSubview:self.logView];
 
     container.translatesAutoresizingMaskIntoConstraints = NO;
-    self.statusBtn.translatesAutoresizingMaskIntoConstraints = NO;
-    self.friendsBtn.translatesAutoresizingMaskIntoConstraints = NO;
     self.tokenCaption.translatesAutoresizingMaskIntoConstraints = NO;
     self.tokenLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.tokenEyeBtn.translatesAutoresizingMaskIntoConstraints = NO;
@@ -294,15 +284,7 @@ static UIImage *QRImage(NSString *string) {
         [container.trailingAnchor constraintEqualToAnchor:g.trailingAnchor constant:-12],
         [container.bottomAnchor constraintEqualToAnchor:g.bottomAnchor constant:-12],
 
-        [self.statusBtn.topAnchor constraintEqualToAnchor:container.topAnchor],
-        [self.statusBtn.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
-        [self.statusBtn.trailingAnchor constraintEqualToAnchor:container.centerXAnchor constant:-6],
-
-        [self.friendsBtn.topAnchor constraintEqualToAnchor:self.statusBtn.topAnchor],
-        [self.friendsBtn.leadingAnchor constraintEqualToAnchor:container.centerXAnchor constant:6],
-        [self.friendsBtn.trailingAnchor constraintEqualToAnchor:container.trailingAnchor],
-
-        [self.tokenCaption.topAnchor constraintEqualToAnchor:self.statusBtn.bottomAnchor constant:12],
+        [self.tokenCaption.topAnchor constraintEqualToAnchor:container.topAnchor],
         [self.tokenCaption.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
 
         [self.tokenQRBtn.topAnchor constraintEqualToAnchor:self.tokenCaption.bottomAnchor constant:4],
@@ -367,43 +349,6 @@ static UIImage *QRImage(NSString *string) {
                 [weakSelf.serverLogView scrollRangeToVisible:bottom];
             });
         }];
-    }];
-}
-
-#pragma mark - Button actions
-
-- (void)friendsPressed {
-    [self log:@"fetching Find My friends… (may take ~10s)"];
-    __weak typeof(self) weakSelf = self;
-    [self.daemon getFriends:^(BOOL ok, NSArray *friends) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (!ok) { [weakSelf log:@"friends: FAIL"]; return; }
-            NSMutableString *s = [NSMutableString stringWithFormat:@"friends (%lu):\n", (unsigned long)friends.count];
-            for (NSDictionary *f in friends) {
-                if ([f[@"valid"] boolValue]) {
-                    [s appendFormat:@"  %@  %.5f, %.5f\n", f[@"handle"], [f[@"lat"] doubleValue], [f[@"lon"] doubleValue]];
-                } else {
-                    [s appendFormat:@"  %@  (no location)\n", f[@"handle"]];
-                }
-            }
-            [weakSelf log:s];
-        });
-    }];
-}
-
-- (void)statusPressed {
-    [self log:@"status pressed"];
-    __weak typeof(self) weakSelf = self;
-    [self.daemon getStatus:^(BOOL ok, NSDictionary *resp) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (!ok) {
-                [weakSelf log:@"status: FAIL"];
-                return;
-            }
-            NSData *d = [NSJSONSerialization dataWithJSONObject:resp options:NSJSONWritingPrettyPrinted error:nil];
-            NSString *s = d ? [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] : resp.description;
-            [weakSelf log:[NSString stringWithFormat:@"status:\n%@\n", s]];
-        });
     }];
 }
 

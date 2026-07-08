@@ -3,7 +3,10 @@
 #import "LSSLocalHTTPServer.h"
 #import "LSSLocSimController.h"
 #import <CoreLocation/CoreLocation.h>
+#import <IOKit/ps/IOPowerSources.h>
+#import <IOKit/ps/IOPSKeys.h>
 #include <spawn.h>
+#include <math.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -58,6 +61,57 @@ static NSString *FriendsSummary(NSString *json) {
     }
     return [NSString stringWithFormat:@"ok: %lu friends, %lu valid locations",
             (unsigned long)friends.count, (unsigned long)valid];
+}
+
+static NSDictionary *ReadBatteryStatus(void) {
+    CFTypeRef info = IOPSCopyPowerSourcesInfo();
+    if (!info) return @{@"ok": @NO, @"message": @"battery info unavailable"};
+
+    CFArrayRef sources = IOPSCopyPowerSourcesList(info);
+    if (!sources) {
+        CFRelease(info);
+        return @{@"ok": @NO, @"message": @"battery source unavailable"};
+    }
+
+    NSMutableDictionary *battery = nil;
+    CFIndex count = CFArrayGetCount(sources);
+    for (CFIndex i = 0; i < count; i++) {
+        CFTypeRef source = CFArrayGetValueAtIndex(sources, i);
+        CFDictionaryRef desc = IOPSGetPowerSourceDescription(info, source);
+        if (!desc) continue;
+
+        NSDictionary *d = (__bridge NSDictionary *)desc;
+        NSString *currentKey = @(kIOPSCurrentCapacityKey);
+        NSString *maxKey = @(kIOPSMaxCapacityKey);
+        NSString *stateKey = @(kIOPSPowerSourceStateKey);
+        NSString *chargingKey = @(kIOPSIsChargingKey);
+
+        NSNumber *current = [d[currentKey] isKindOfClass:[NSNumber class]] ? d[currentKey] : nil;
+        NSNumber *max = [d[maxKey] isKindOfClass:[NSNumber class]] ? d[maxKey] : nil;
+        if (!current || !max || max.integerValue <= 0) continue;
+
+        NSInteger percent = (NSInteger)llround(((double)current.integerValue * 100.0) / (double)max.integerValue);
+        percent = MAX((NSInteger)0, MIN((NSInteger)100, percent));
+
+        NSString *state = [d[stateKey] isKindOfClass:[NSString class]] ? d[stateKey] : @"";
+        NSNumber *isCharging = [d[chargingKey] isKindOfClass:[NSNumber class]] ? d[chargingKey] : nil;
+        BOOL externalPower = [state isEqualToString:@kIOPSACPowerValue];
+        BOOL charging = isCharging ? isCharging.boolValue : externalPower;
+
+        battery = [@{
+            @"ok": @YES,
+            @"batteryPercent": @(percent),
+            @"batteryLevel": @((double)percent / 100.0),
+            @"charging": @(charging),
+            @"externalPower": @(externalPower),
+        } mutableCopy];
+        break;
+    }
+
+    CFRelease(sources);
+    CFRelease(info);
+
+    return battery ?: @{@"ok": @NO, @"message": @"battery not found"};
 }
 
 @interface LSSDaemonController ()
@@ -220,11 +274,8 @@ static NSString *FriendsSummary(NSString *json) {
     }
 }
 
-- (NSDictionary *)status {
-    return @{
-        @"ok": @YES,
-        @"publicPort": @(self.publicPort),
-    };
+- (NSDictionary *)batteryStatus {
+    return ReadBatteryStatus();
 }
 
 - (NSDictionary *)logs {

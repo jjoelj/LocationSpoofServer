@@ -156,12 +156,6 @@ static NSData *ReadExact(int fd, size_t n) {
 
     LSSDaemonController *dc = [LSSDaemonController shared];
 
-    if ([method isEqualToString:@"GET"] && [path isEqualToString:@"/status"]) {
-        WriteJSON(cfd, 200, [dc status]);
-        close(cfd);
-        return;
-    }
-
     if ([method isEqualToString:@"GET"] && [path isEqualToString:@"/logs"]) {
         WriteJSON(cfd, 200, [dc logs]);
         close(cfd);

@@ -30,7 +30,7 @@ locationspoofd_FILES = daemon/LSSLocalHTTPServer.m \
 					   daemon/LSSDaemonController.m \
 					   daemon/main.m
 
-locationspoofd_FRAMEWORKS = Foundation CoreLocation
+locationspoofd_FRAMEWORKS = Foundation CoreLocation IOKit
 locationspoofd_CFLAGS = -fobjc-arc -Idaemon
 locationspoofd_CODESIGN_FLAGS = -Sentitlements.plist
 

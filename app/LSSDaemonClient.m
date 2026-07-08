@@ -31,19 +31,6 @@
     }] resume];
 }
 
-- (void)getStatus:(void (^)(BOOL ok, NSDictionary *resp))completion {
-    [self request:@"/status" method:@"GET" json:nil completion:^(BOOL ok, NSDictionary *resp) {
-        completion(ok, resp);
-    }];
-}
-
-- (void)getFriends:(void (^)(BOOL ok, NSArray *friends))completion {
-    [self request:@"/friends" method:@"GET" json:nil completion:^(BOOL ok, NSDictionary *resp) {
-        NSArray *f = [resp[@"friends"] isKindOfClass:[NSArray class]] ? resp[@"friends"] : @[];
-        completion(ok, f);
-    }];
-}
-
 - (void)getLogs:(void (^)(BOOL ok, NSString *logs))completion {
     [self request:@"/logs" method:@"GET" json:nil completion:^(BOOL ok, NSDictionary *resp) {
         completion(ok, resp[@"logs"] ?: @"");

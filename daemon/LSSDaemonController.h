@@ -14,7 +14,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSDictionary *)regenerateToken;
 - (NSString *)friendsJSON;
 - (NSString *)refreshFriendsJSONForHandle:(nullable NSString *)handle ifStarted:(BOOL *)started;
-- (NSDictionary *)status;
+- (NSDictionary *)batteryStatus;
 - (NSDictionary *)logs;
 
 @end
