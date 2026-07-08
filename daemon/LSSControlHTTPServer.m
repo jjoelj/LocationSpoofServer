@@ -128,6 +128,19 @@ static NSData *ReadExact(int fd, size_t n) {
         return;
     }
 
+    if ([method isEqualToString:@"GET"] && [target isEqualToString:@"/friends"]) {
+        NSString *json = [dc friendsJSON];
+        NSData *body = [json dataUsingEncoding:NSUTF8StringEncoding];
+        char hdr[256];
+        int hn = snprintf(hdr, sizeof(hdr),
+                          "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\n"
+                          "Content-Length: %zu\r\nConnection: close\r\n\r\n", (size_t)body.length);
+        (void)write(cfd, hdr, (size_t)hn);
+        (void)write(cfd, body.bytes, body.length);
+        close(cfd);
+        return;
+    }
+
     if ([method isEqualToString:@"GET"] && [target isEqualToString:@"/token"]) {
         WriteJSON(cfd, 200, @{@"ok": @YES, @"token": dc.setEndpointToken ?: @""});
         close(cfd);
@@ -181,7 +194,11 @@ static NSData *ReadExact(int fd, size_t n) {
         if (!self) return;
         int cfd = accept(self.listenFD, NULL, NULL);
         if (cfd < 0) return;
-        [self handleClient:cfd];
+        // Handle off the accept queue: /friends can block ~15s and must not
+        // stall the app's 0.5s log polling.
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+            [self handleClient:cfd];
+        });
     });
 
     dispatch_resume(self.acceptSource);

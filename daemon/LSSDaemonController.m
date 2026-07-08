@@ -3,6 +3,13 @@
 #import "LSSLocalHTTPServer.h"
 #import "LSSLocSimController.h"
 #import <CoreLocation/CoreLocation.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+extern char **environ;
+
+static NSString *const kFMFHelperPath = @"/usr/libexec/fmfhelper";
 
 // Random per-device token, persisted so it survives daemon restarts (otherwise
 // the external pusher's saved token would break on every relaunch). Not in git.
@@ -102,6 +109,42 @@ static NSString *LoadOrCreateToken(void) {
 
 - (NSDictionary *)regenerateToken {
     return [self applyToken:GenerateToken()];
+}
+
+// Spawn the FMF helper and return its JSON stdout. Blocks until it exits
+// (helper self-caps at ~15s), so callers must not run on a shared serial path.
+- (NSString *)friendsJSON {
+    int fds[2];
+    if (pipe(fds) != 0) return @"{\"ok\":false,\"message\":\"pipe failed\"}";
+
+    posix_spawn_file_actions_t fa;
+    posix_spawn_file_actions_init(&fa);
+    posix_spawn_file_actions_adddup2(&fa, fds[1], STDOUT_FILENO);
+    posix_spawn_file_actions_addclose(&fa, fds[0]);
+    posix_spawn_file_actions_addclose(&fa, fds[1]);
+
+    char *argv[] = { (char *)kFMFHelperPath.UTF8String, NULL };
+    pid_t pid = 0;
+    int rc = posix_spawn(&pid, argv[0], &fa, NULL, argv, environ);
+    posix_spawn_file_actions_destroy(&fa);
+    close(fds[1]);
+
+    if (rc != 0) {
+        close(fds[0]);
+        [[LSSLogger shared] log:[NSString stringWithFormat:@"fmfhelper spawn failed rc=%d", rc] tag:@"FMF"];
+        return @"{\"ok\":false,\"message\":\"helper spawn failed\"}";
+    }
+
+    NSMutableData *out = [NSMutableData data];
+    uint8_t buf[4096];
+    ssize_t n;
+    while ((n = read(fds[0], buf, sizeof(buf))) > 0) [out appendBytes:buf length:(size_t)n];
+    close(fds[0]);
+    waitpid(pid, NULL, 0);
+
+    if (out.length == 0) return @"{\"ok\":false,\"message\":\"helper produced no output\"}";
+    NSString *s = [[NSString alloc] initWithData:out encoding:NSUTF8StringEncoding];
+    return s ?: @"{\"ok\":false,\"message\":\"helper output not utf8\"}";
 }
 
 - (NSDictionary *)status {

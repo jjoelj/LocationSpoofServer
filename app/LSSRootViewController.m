@@ -44,6 +44,7 @@ static UIImage *QRImage(NSString *string) {
 @property(nonatomic, strong) UITextView *logView;
 
 @property(nonatomic, strong) UIButton *statusBtn;
+@property(nonatomic, strong) UIButton *friendsBtn;
 
 @property(nonatomic, strong) UILabel *tokenCaption;
 @property(nonatomic, strong) UILabel *tokenLabel;
@@ -215,6 +216,7 @@ static UIImage *QRImage(NSString *string) {
 
 - (void)buildUI {
     self.statusBtn = [self makeButton:@"Status" action:@selector(statusPressed)];
+    self.friendsBtn = [self makeButton:@"Friends" action:@selector(friendsPressed)];
 
     self.tokenCaption = [[UILabel alloc] init];
     self.tokenCaption.font = [UIFont systemFontOfSize:11 weight:UIFontWeightSemibold];
@@ -259,6 +261,7 @@ static UIImage *QRImage(NSString *string) {
     UIView *container = [[UIView alloc] init];
     [self.view addSubview:container];
     [container addSubview:self.statusBtn];
+    [container addSubview:self.friendsBtn];
     [container addSubview:self.tokenCaption];
     [container addSubview:self.tokenLabel];
     [container addSubview:self.tokenEyeBtn];
@@ -270,6 +273,7 @@ static UIImage *QRImage(NSString *string) {
 
     container.translatesAutoresizingMaskIntoConstraints = NO;
     self.statusBtn.translatesAutoresizingMaskIntoConstraints = NO;
+    self.friendsBtn.translatesAutoresizingMaskIntoConstraints = NO;
     self.tokenCaption.translatesAutoresizingMaskIntoConstraints = NO;
     self.tokenLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.tokenEyeBtn.translatesAutoresizingMaskIntoConstraints = NO;
@@ -292,7 +296,11 @@ static UIImage *QRImage(NSString *string) {
 
         [self.statusBtn.topAnchor constraintEqualToAnchor:container.topAnchor],
         [self.statusBtn.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
-        [self.statusBtn.trailingAnchor constraintEqualToAnchor:container.trailingAnchor],
+        [self.statusBtn.trailingAnchor constraintEqualToAnchor:container.centerXAnchor constant:-6],
+
+        [self.friendsBtn.topAnchor constraintEqualToAnchor:self.statusBtn.topAnchor],
+        [self.friendsBtn.leadingAnchor constraintEqualToAnchor:container.centerXAnchor constant:6],
+        [self.friendsBtn.trailingAnchor constraintEqualToAnchor:container.trailingAnchor],
 
         [self.tokenCaption.topAnchor constraintEqualToAnchor:self.statusBtn.bottomAnchor constant:12],
         [self.tokenCaption.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
@@ -363,6 +371,25 @@ static UIImage *QRImage(NSString *string) {
 }
 
 #pragma mark - Button actions
+
+- (void)friendsPressed {
+    [self log:@"fetching Find My friends… (may take ~10s)"];
+    __weak typeof(self) weakSelf = self;
+    [self.daemon getFriends:^(BOOL ok, NSArray *friends) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (!ok) { [weakSelf log:@"friends: FAIL"]; return; }
+            NSMutableString *s = [NSMutableString stringWithFormat:@"friends (%lu):\n", (unsigned long)friends.count];
+            for (NSDictionary *f in friends) {
+                if ([f[@"valid"] boolValue]) {
+                    [s appendFormat:@"  %@  %.5f, %.5f\n", f[@"name"], [f[@"lat"] doubleValue], [f[@"lon"] doubleValue]];
+                } else {
+                    [s appendFormat:@"  %@  (no location)\n", f[@"name"]];
+                }
+            }
+            [weakSelf log:s];
+        });
+    }];
+}
 
 - (void)statusPressed {
     [self log:@"status pressed"];
