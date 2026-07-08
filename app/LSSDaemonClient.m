@@ -49,4 +49,16 @@
     }];
 }
 
+- (void)setToken:(NSString *)token completion:(void (^)(BOOL ok, NSString *message))completion {
+    [self request:@"/token" method:@"POST" json:@{@"token": token} completion:^(BOOL ok, NSDictionary *resp) {
+        completion(ok, resp[@"message"] ?: @"");
+    }];
+}
+
+- (void)regenerateToken:(void (^)(BOOL ok, NSString *message))completion {
+    [self request:@"/token/regenerate" method:@"POST" json:@{} completion:^(BOOL ok, NSDictionary *resp) {
+        completion(ok, resp[@"message"] ?: @"");
+    }];
+}
+
 @end

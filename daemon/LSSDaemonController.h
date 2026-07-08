@@ -10,6 +10,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (void)startServices;
 
+- (NSDictionary *)applyToken:(NSString *)token;
+- (NSDictionary *)regenerateToken;
 - (NSDictionary *)status;
 - (NSDictionary *)logs;
 

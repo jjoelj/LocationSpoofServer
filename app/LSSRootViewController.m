@@ -48,6 +48,8 @@ static UIImage *QRImage(NSString *string) {
 @property(nonatomic, strong) UILabel *tokenCaption;
 @property(nonatomic, strong) UILabel *tokenLabel;
 @property(nonatomic, strong) UIButton *tokenEyeBtn;
+@property(nonatomic, strong) UIButton *tokenEditBtn;
+@property(nonatomic, strong) UIButton *tokenRegenBtn;
 @property(nonatomic, strong) UIButton *tokenQRBtn;
 @property(nonatomic, copy) NSString *token;
 @property(nonatomic, assign) BOOL tokenHidden;
@@ -86,7 +88,8 @@ static UIImage *QRImage(NSString *string) {
     if (self.token.length == 0) {
         self.tokenLabel.text = @"(unavailable)";
     } else if (self.tokenHidden) {
-        self.tokenLabel.text = [@"" stringByPaddingToLength:24 withString:@"•" startingAtIndex:0];
+        NSUInteger keep = MIN((NSUInteger)4, self.token.length);
+        self.tokenLabel.text = [@"••••••••" stringByAppendingString:[self.token substringFromIndex:self.token.length - keep]];
     } else {
         self.tokenLabel.text = self.token;
     }
@@ -97,6 +100,57 @@ static UIImage *QRImage(NSString *string) {
 - (void)toggleTokenVisibility {
     self.tokenHidden = !self.tokenHidden;
     [self updateTokenDisplay];
+}
+
+- (void)editToken {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Set Token"
+                                                                   message:@"8-128 chars of A-Za-z0-9._~-"
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.placeholder = @"new token";
+        tf.font = [UIFont monospacedSystemFontOfSize:13 weight:UIFontWeightRegular];
+        tf.autocorrectionType = UITextAutocorrectionTypeNo;
+        tf.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    }];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+
+    __weak typeof(self) weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:@"Save" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a) {
+        NSString *tok = alert.textFields.firstObject.text ?: @"";
+        [weakSelf.daemon setToken:tok completion:^(BOOL ok, NSString *message) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (ok) {
+                    [weakSelf log:@"token updated"];
+                    [weakSelf fetchToken];
+                } else {
+                    [weakSelf log:[NSString stringWithFormat:@"set token failed: %@", message]];
+                }
+            });
+        }];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)regenerateToken {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Regenerate Token?"
+                                                                   message:@"Clients using the current token will stop working."
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+
+    __weak typeof(self) weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:@"Regenerate" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *a) {
+        [weakSelf.daemon regenerateToken:^(BOOL ok, NSString *message) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (ok) {
+                    [weakSelf log:@"token regenerated"];
+                    [weakSelf fetchToken];
+                } else {
+                    [weakSelf log:[NSString stringWithFormat:@"regenerate failed: %@", message]];
+                }
+            });
+        }];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)showQR {
@@ -178,6 +232,14 @@ static UIImage *QRImage(NSString *string) {
     [self.tokenEyeBtn setImage:[UIImage systemImageNamed:@"eye"] forState:UIControlStateNormal];
     [self.tokenEyeBtn addTarget:self action:@selector(toggleTokenVisibility) forControlEvents:UIControlEventTouchUpInside];
 
+    self.tokenEditBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    [self.tokenEditBtn setImage:[UIImage systemImageNamed:@"pencil"] forState:UIControlStateNormal];
+    [self.tokenEditBtn addTarget:self action:@selector(editToken) forControlEvents:UIControlEventTouchUpInside];
+
+    self.tokenRegenBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    [self.tokenRegenBtn setImage:[UIImage systemImageNamed:@"arrow.clockwise"] forState:UIControlStateNormal];
+    [self.tokenRegenBtn addTarget:self action:@selector(regenerateToken) forControlEvents:UIControlEventTouchUpInside];
+
     self.tokenQRBtn = [self makeButton:@"QR" action:@selector(showQR)];
 
     self.serverLogView = [[UITextView alloc] init];
@@ -200,6 +262,8 @@ static UIImage *QRImage(NSString *string) {
     [container addSubview:self.tokenCaption];
     [container addSubview:self.tokenLabel];
     [container addSubview:self.tokenEyeBtn];
+    [container addSubview:self.tokenEditBtn];
+    [container addSubview:self.tokenRegenBtn];
     [container addSubview:self.tokenQRBtn];
     [container addSubview:self.serverLogView];
     [container addSubview:self.logView];
@@ -209,11 +273,15 @@ static UIImage *QRImage(NSString *string) {
     self.tokenCaption.translatesAutoresizingMaskIntoConstraints = NO;
     self.tokenLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.tokenEyeBtn.translatesAutoresizingMaskIntoConstraints = NO;
+    self.tokenEditBtn.translatesAutoresizingMaskIntoConstraints = NO;
+    self.tokenRegenBtn.translatesAutoresizingMaskIntoConstraints = NO;
     self.tokenQRBtn.translatesAutoresizingMaskIntoConstraints = NO;
     self.serverLogView.translatesAutoresizingMaskIntoConstraints = NO;
     self.logView.translatesAutoresizingMaskIntoConstraints = NO;
     [self.tokenQRBtn setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
     [self.tokenEyeBtn setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    [self.tokenEditBtn setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    [self.tokenRegenBtn setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
     UILayoutGuide *g = self.view.safeAreaLayoutGuide;
 
     [NSLayoutConstraint activateConstraints:@[
@@ -232,8 +300,14 @@ static UIImage *QRImage(NSString *string) {
         [self.tokenQRBtn.topAnchor constraintEqualToAnchor:self.tokenCaption.bottomAnchor constant:4],
         [self.tokenQRBtn.trailingAnchor constraintEqualToAnchor:container.trailingAnchor],
 
+        [self.tokenRegenBtn.centerYAnchor constraintEqualToAnchor:self.tokenQRBtn.centerYAnchor],
+        [self.tokenRegenBtn.trailingAnchor constraintEqualToAnchor:self.tokenQRBtn.leadingAnchor constant:-12],
+
+        [self.tokenEditBtn.centerYAnchor constraintEqualToAnchor:self.tokenQRBtn.centerYAnchor],
+        [self.tokenEditBtn.trailingAnchor constraintEqualToAnchor:self.tokenRegenBtn.leadingAnchor constant:-12],
+
         [self.tokenEyeBtn.centerYAnchor constraintEqualToAnchor:self.tokenQRBtn.centerYAnchor],
-        [self.tokenEyeBtn.trailingAnchor constraintEqualToAnchor:self.tokenQRBtn.leadingAnchor constant:-12],
+        [self.tokenEyeBtn.trailingAnchor constraintEqualToAnchor:self.tokenEditBtn.leadingAnchor constant:-12],
 
         [self.tokenLabel.centerYAnchor constraintEqualToAnchor:self.tokenQRBtn.centerYAnchor],
         [self.tokenLabel.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
@@ -276,6 +350,7 @@ static UIImage *QRImage(NSString *string) {
     }];
 
     self.logTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(__unused NSTimer *t) {
+        if (weakSelf.token.length == 0) [weakSelf fetchToken]; // daemon may start after us
         [weakSelf.daemon getLogs:^(BOOL ok, NSString *logs) {
             if (!ok || !logs) return;
             dispatch_async(dispatch_get_main_queue(), ^{

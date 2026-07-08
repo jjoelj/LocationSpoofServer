@@ -16,16 +16,20 @@ static NSString *GenerateToken(void) {
     return s;
 }
 
+static void SaveToken(NSString *tok) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    [fm createDirectoryAtPath:[kTokenPath stringByDeletingLastPathComponent]
+  withIntermediateDirectories:YES attributes:nil error:nil];
+    [tok writeToFile:kTokenPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+}
+
 static NSString *LoadOrCreateToken(void) {
     NSString *existing = [NSString stringWithContentsOfFile:kTokenPath encoding:NSUTF8StringEncoding error:nil];
     existing = [existing stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if (existing.length > 0) return existing;
 
     NSString *tok = GenerateToken();
-    NSFileManager *fm = [NSFileManager defaultManager];
-    [fm createDirectoryAtPath:[kTokenPath stringByDeletingLastPathComponent]
-  withIntermediateDirectories:YES attributes:nil error:nil];
-    [tok writeToFile:kTokenPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    SaveToken(tok);
     return tok;
 }
 
@@ -76,6 +80,28 @@ static NSString *LoadOrCreateToken(void) {
 
     [self.publicServer startOnPort:self.publicPort];
     [[LSSLogger shared] log:[NSString stringWithFormat:@"public server on 127.0.0.1:%d", self.publicPort] tag:@"DAEMON"];
+}
+
+- (NSDictionary *)applyToken:(NSString *)tok {
+    tok = [tok stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+
+    // Token travels as a URL query param, so restrict to unreserved URI chars.
+    NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:
+        @"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._~-"];
+    if (tok.length < 8 || tok.length > 128 ||
+        [tok rangeOfCharacterFromSet:[allowed invertedSet]].location != NSNotFound) {
+        return @{@"ok": @NO, @"message": @"token must be 8-128 chars of A-Za-z0-9._~-"};
+    }
+
+    SaveToken(tok);
+    self.setEndpointToken = tok;
+    self.publicServer.authToken = tok;
+    [[LSSLogger shared] log:@"set token updated manually" tag:@"DAEMON"];
+    return @{@"ok": @YES, @"token": tok};
+}
+
+- (NSDictionary *)regenerateToken {
+    return [self applyToken:GenerateToken()];
 }
 
 - (NSDictionary *)status {

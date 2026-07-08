@@ -134,6 +134,20 @@ static NSData *ReadExact(int fd, size_t n) {
         return;
     }
 
+    if ([method isEqualToString:@"POST"] && [target isEqualToString:@"/token/regenerate"]) {
+        WriteJSON(cfd, 200, [dc regenerateToken]);
+        close(cfd);
+        return;
+    }
+
+    if ([method isEqualToString:@"POST"] && [target isEqualToString:@"/token"]) {
+        NSString *tok = [json[@"token"] isKindOfClass:[NSString class]] ? json[@"token"] : @"";
+        NSDictionary *resp = [dc applyToken:tok];
+        WriteJSON(cfd, [resp[@"ok"] boolValue] ? 200 : 400, resp);
+        close(cfd);
+        return;
+    }
+
     WriteJSON(cfd, 404, @{@"ok": @NO, @"message": @"not found"});
     close(cfd);
 }
